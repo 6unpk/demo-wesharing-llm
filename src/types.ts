@@ -21,3 +21,39 @@ export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
+
+/**
+ * Intent analysis request body
+ */
+export interface IntentAnalysisRequest {
+  message: string;
+  session_id: string;
+}
+
+/**
+ * Intent types
+ */
+export type IntentType = "SEARCH_SPACE" | "ADD_SPACE" | "CREATE_USER_PROFILE";
+
+/**
+ * Intent analysis success response
+ */
+export interface IntentAnalysisSuccessResponse {
+  status: "SUCCESS";
+  intent_type: IntentType;
+}
+
+/**
+ * Intent analysis failure response
+ */
+export interface IntentAnalysisFailureResponse {
+  status: "FAILURE";
+  error: Array<{
+    message: string;
+  }>;
+}
+
+/**
+ * Intent analysis response union type
+ */
+export type IntentAnalysisResponse = IntentAnalysisSuccessResponse | IntentAnalysisFailureResponse;
