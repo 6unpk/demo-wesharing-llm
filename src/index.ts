@@ -28,21 +28,29 @@ export default {
   ): Promise<Response> {
     const url = new URL(request.url);
 
-    // Handle static assets (frontend)
-    if (url.pathname === "/" || (!url.pathname.startsWith("/api/") && !url.pathname.startsWith("/llm/"))) {
-      return env.ASSETS.fetch(request);
+    // Handle static assets (frontend) - TEMPORARILY DISABLED
+    // if (url.pathname === "/" || (!url.pathname.startsWith("/api/") && !url.pathname.startsWith("/llm/"))) {
+    //   return env.ASSETS.fetch(request);
+    // }
+    
+    // Return API server message for root path
+    if (url.pathname === "/") {
+      return new Response("API Server - Only /llm/analyze-intent endpoint is available", { 
+        status: 200,
+        headers: { "content-type": "text/plain" }
+      });
     }
 
-    // API Routes
-    if (url.pathname === "/api/chat") {
-      // Handle POST requests for chat
-      if (request.method === "POST") {
-        return handleChatRequest(request, env);
-      }
+    // API Routes - CHAT API TEMPORARILY DISABLED
+    // if (url.pathname === "/api/chat") {
+    //   // Handle POST requests for chat
+    //   if (request.method === "POST") {
+    //     return handleChatRequest(request, env);
+    //   }
 
-      // Method not allowed for other request types
-      return new Response("Method not allowed", { status: 405 });
-    }
+    //   // Method not allowed for other request types
+    //   return new Response("Method not allowed", { status: 405 });
+    // }
 
     // Intent analysis API route
     if (url.pathname === "/llm/analyze-intent") {
@@ -56,58 +64,61 @@ export default {
     }
 
     // Handle 404 for unmatched routes
-    return new Response("Not found", { status: 404 });
+    return new Response("API Server - Only /llm/analyze-intent endpoint is available", { 
+      status: 404,
+      headers: { "content-type": "text/plain" }
+    });
   },
 } satisfies ExportedHandler<Env>;
 
 /**
- * Handles chat API requests
+ * Handles chat API requests - TEMPORARILY DISABLED
  */
-async function handleChatRequest(
-  request: Request,
-  env: Env,
-): Promise<Response> {
-  try {
-    // Parse JSON request body
-    const { messages = [] } = (await request.json()) as {
-      messages: ChatMessage[];
-    };
+// async function handleChatRequest(
+//   request: Request,
+//   env: Env,
+// ): Promise<Response> {
+//   try {
+//     // Parse JSON request body
+//     const { messages = [] } = (await request.json()) as {
+//       messages: ChatMessage[];
+//     };
 
-    // Add system prompt if not present
-    if (!messages.some((msg) => msg.role === "system")) {
-      messages.unshift({ role: "system", content: SYSTEM_PROMPT });
-    }
+//     // Add system prompt if not present
+//     if (!messages.some((msg) => msg.role === "system")) {
+//       messages.unshift({ role: "system", content: SYSTEM_PROMPT });
+//     });
 
-    const response = await env.AI.run(
-      MODEL_ID,
-      {
-        messages,
-        max_tokens: 1024,
-      },
-      {
-        returnRawResponse: true,
-        // Uncomment to use AI Gateway
-        // gateway: {
-        //   id: "YOUR_GATEWAY_ID", // Replace with your AI Gateway ID
-        //   skipCache: false,      // Set to true to bypass cache
-        //   cacheTtl: 3600,        // Cache time-to-live in seconds
-        // },
-      },
-    );
+//     const response = await env.AI.run(
+//       MODEL_ID,
+//       {
+//         messages,
+//         max_tokens: 1024,
+//       },
+//       {
+//         returnRawResponse: true,
+//         // Uncomment to use AI Gateway
+//         // gateway: {
+//         //   id: "YOUR_GATEWAY_ID", // Replace with your AI Gateway ID
+//         //   skipCache: false,      // Set to true to bypass cache
+//         //   cacheTtl: 3600,        // Cache time-to-live in seconds
+//         // },
+//       },
+//     );
 
-    // Return streaming response
-    return response;
-  } catch (error) {
-    console.error("Error processing chat request:", error);
-    return new Response(
-      JSON.stringify({ error: "Failed to process request" }),
-      {
-        status: 500,
-        headers: { "content-type": "application/json" },
-      },
-    );
-  }
-}
+//     // Return streaming response
+//     return response;
+//   } catch (error) {
+//     console.error("Error processing chat request:", error);
+//     return new Response(
+//       JSON.stringify({ error: "Failed to process request" }),
+//       {
+//         status: 500,
+//         headers: { "content-type": "application/json" },
+//       },
+//     );
+//   }
+// }
 
 /**
  * Handles intent analysis API requests

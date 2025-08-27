@@ -9,9 +9,9 @@ export interface Env {
   AI: Ai;
 
   /**
-   * Binding for static assets.
+   * Binding for static assets - TEMPORARILY DISABLED
    */
-  ASSETS: { fetch: (request: Request) => Promise<Response> };
+  // ASSETS: { fetch: (request: Request) => Promise<Response> };
 }
 
 /**
