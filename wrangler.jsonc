@@ -17,5 +17,18 @@
   "ai": {
     "binding": "AI"
   },
+  "vars": {
+    "ANTHROPIC_API_KEY": "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",
+  },
+    // Add this to your wrangler.jsonc
+    "kv_namespaces": [
+      {
+        "binding": "KV",
+        "id": "6af472165d9b4c07a97c1fdb3ecfd8fd",
+        
+        // Optional: preview_id used when running `wrangler dev` for local dev
+        "preview_id": "6af472165d9b4c07a97c1fdb3ecfd8fd"
+      }
+    ],
   "upload_source_maps": true
 }
