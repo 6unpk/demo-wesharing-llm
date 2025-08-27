@@ -17,7 +17,6 @@ import {
   SpaceInfo 
 } from "./types";
 import type { KVSpaceData } from "./types";
-import Anthropic from '@anthropic-ai/sdk';
 
 // Model ID for Workers AI model
 // https://developers.cloudflare.com/workers-ai/models/
@@ -550,24 +549,21 @@ ${spaces}
 
     console.log(responsePrompt);
     
-    const anthropic = new Anthropic({
-      apiKey: env.ANTHROPIC_API_KEY,
-    });
-
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1024,
+    const response = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
       messages: [
         {
           role: "user",
           content: responsePrompt
         }
       ],
+      max_tokens: 1024,
     });
 
-    const content = response.content[0];
-    if (content && 'text' in content) {
-      return content.text;
+    if (typeof response === 'string') {
+      return response;
+    }
+    if (response && typeof response === 'object' && 'response' in response) {
+      return response.response;
     }
     return "응답을 생성할 수 없습니다.";
   } catch (error) {
@@ -614,26 +610,26 @@ async function generateIntentResponse(
         return "안녕하세요! 무엇을 도와드릴까요?";
     }
 
-    const anthropic = new Anthropic({
-      apiKey: env.ANTHROPIC_API_KEY,
-    });
-
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1024,
-      temperature: 0.3,
-      system: systemPrompt,
+    const response = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
       messages: [
+        {
+          role: "system",
+          content: systemPrompt
+        },
         {
           role: "user",
           content: responsePrompt
         }
       ],
+      max_tokens: 1024,
+      temperature: 0.3,
     });
 
-    const content = response.content[0];
-    if (content && 'text' in content) {
-      return content.text;
+    if (typeof response === 'string') {
+      return response;
+    }
+    if (response && typeof response === 'object' && 'response' in response) {
+      return response.response;
     }
     return "응답을 생성할 수 없습니다.";
   } catch (error) {
