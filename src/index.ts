@@ -17,6 +17,7 @@ import {
   SpaceInfo 
 } from "./types";
 import type { KVSpaceData } from "./types";
+import Anthropic from "@anthropic-ai/sdk";
 
 // Model ID for Workers AI model
 // https://developers.cloudflare.com/workers-ai/models/
@@ -543,10 +544,20 @@ ${spaces}
 사용자에게 죄송하다는 말과 함께 다른 조건으로 다시 검색해보거나, 
 더 구체적인 요구사항을 알려달라고 친근하게 요청하는 응답을 작성해주세요.`;
     }
-
-    console.log(responsePrompt);
     
-    const response = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
+    const apiKey = env.ANTHROPIC_API_KEY;
+    const accountId = "b227edcf71da28cffe319fe486c42e39"; // 실제 account_id로 교체 필요
+    const gatewayId = "my-gateway"; // 실제 gateway_id로 교체 필요
+    const baseURL = `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/anthropic`;
+
+    console.log(apiKey);
+    const anthropic = new Anthropic({
+      apiKey,
+      baseURL,
+    });
+
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-20250514",
       messages: [
         {
           role: "user",
@@ -556,11 +567,9 @@ ${spaces}
       max_tokens: 1024,
     });
 
-    if (typeof response === 'string') {
-      return response;
-    }
-    if (response && typeof response === 'object' && 'response' in response) {
-      return response.response;
+    const content = response.content[0];
+    if (content && 'text' in content) {
+      return content.text;
     }
     return "응답을 생성할 수 없습니다.";
   } catch (error) {
@@ -607,12 +616,20 @@ async function generateIntentResponse(
         return "안녕하세요! 무엇을 도와드릴까요?";
     }
 
-    const response = await env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast', {
+    const apiKey = env.ANTHROPIC_API_KEY;
+    const accountId = "your_account_id"; // 실제 account_id로 교체 필요
+    const gatewayId = "your_gateway_id"; // 실제 gateway_id로 교체 필요
+    const baseURL = `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/anthropic`;
+
+    const anthropic = new Anthropic({
+      apiKey,
+      baseURL,
+    });
+
+    const response = await anthropic.messages.create({
+      model: "claude-3-5-sonnet-20241022",
+      system: systemPrompt,
       messages: [
-        {
-          role: "system",
-          content: systemPrompt
-        },
         {
           role: "user",
           content: responsePrompt
@@ -622,11 +639,9 @@ async function generateIntentResponse(
       temperature: 0.3,
     });
 
-    if (typeof response === 'string') {
-      return response;
-    }
-    if (response && typeof response === 'object' && 'response' in response) {
-      return response.response;
+    const content = response.content[0];
+    if (content && 'text' in content) {
+      return content.text;
     }
     return "응답을 생성할 수 없습니다.";
   } catch (error) {
