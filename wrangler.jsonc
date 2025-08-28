@@ -20,15 +20,18 @@
   "vars": {
     "GOOGLE_AI_STUDIO_TOKEN": "AIzaSyANVlGCsthSBkCfG9HU_NmrEgI5hwb16YE"
   },
-    // Add this to your wrangler.jsonc
-    "kv_namespaces": [
-      {
-        "binding": "KV",
-        "id": "6af472165d9b4c07a97c1fdb3ecfd8fd",
-        
-        // Optional: preview_id used when running `wrangler dev` for local dev
-        "preview_id": "6af472165d9b4c07a97c1fdb3ecfd8fd"
-      }
-    ],
+  "placement": {
+    "mode": "smart"  
+  },
+  // Add this to your wrangler.jsonc
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "6af472165d9b4c07a97c1fdb3ecfd8fd",
+      
+      // Optional: preview_id used when running `wrangler dev` for local dev
+      "preview_id": "6af472165d9b4c07a97c1fdb3ecfd8fd"
+    }
+  ],
   "upload_source_maps": true
 }
