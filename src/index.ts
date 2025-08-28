@@ -14,7 +14,9 @@ import {
   IntentAnalysisResponseUpdated, 
   IntentType,
   SearchSpaceSuccessResponse,
-  SpaceInfo 
+  SpaceInfo,
+  ChatSession,
+  SessionMessage
 } from "./types";
 import type { KVSpaceData } from "./types";
 import Anthropic from "@anthropic-ai/sdk";
@@ -22,6 +24,86 @@ import Anthropic from "@anthropic-ai/sdk";
 // Model ID for Workers AI model
 // https://developers.cloudflare.com/workers-ai/models/
 const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+
+/**
+ * Get chat session from KV
+ */
+async function getChatSession(sessionId: string, env: Env): Promise<ChatSession | null> {
+  try {
+    const sessionKey = `chat_session:${sessionId}`;
+    const sessionData = await env.KV.get(sessionKey, "json") as ChatSession | null;
+    return sessionData;
+  } catch (error) {
+    console.error("Error getting chat session:", error);
+    return null;
+  }
+}
+
+/**
+ * Save chat session to KV
+ */
+async function saveChatSession(session: ChatSession, env: Env): Promise<void> {
+  try {
+    const sessionKey = `chat_session:${session.session_id}`;
+    await env.KV.put(sessionKey, JSON.stringify(session));
+  } catch (error) {
+    console.error("Error saving chat session:", error);
+  }
+}
+
+/**
+ * Add message to chat session
+ */
+async function addMessageToSession(
+  sessionId: string, 
+  message: SessionMessage, 
+  env: Env
+): Promise<void> {
+  try {
+    let session = await getChatSession(sessionId, env);
+    
+    if (!session) {
+      // Create new session
+      session = {
+        session_id: sessionId,
+        messages: [],
+        last_updated: Date.now(),
+        created_at: Date.now()
+      };
+    }
+    
+    // Add message to session
+    session.messages.push(message);
+    session.last_updated = Date.now();
+    
+    // Keep only last 20 messages to prevent session from getting too large
+    if (session.messages.length > 20) {
+      session.messages = session.messages.slice(-20);
+    }
+    
+    await saveChatSession(session, env);
+  } catch (error) {
+    console.error("Error adding message to session:", error);
+  }
+}
+
+/**
+ * Get conversation context for LLM
+ */
+async function getConversationContext(sessionId: string, env: Env): Promise<SessionMessage[]> {
+  try {
+    const session = await getChatSession(sessionId, env);
+    if (!session) {
+      return [];
+    }
+    
+    // Return last 10 messages for context
+    return session.messages.slice(-10);
+  } catch (error) {
+    console.error("Error getting conversation context:", error);
+    return [];
+  }
+}
 
 /**
  * Creates a failure response
@@ -329,12 +411,36 @@ async function handleIntentAnalysisRequest(
       return createFailureResponse([{ message: validationError }]);
     }
 
-    // Analyze intent using LLM
-    const intentType = await analyzeIntentWithLLM(requestBody.message, env);
+    // Add user message to session
+    const userMessage: SessionMessage = {
+      role: "user",
+      content: requestBody.message,
+      timestamp: Date.now()
+    };
+    await addMessageToSession(requestBody.session_id, userMessage, env);
+
+    // Get conversation context
+    const conversationContext = await getConversationContext(requestBody.session_id, env);
+
+    // Analyze intent using LLM with context
+    const intentType = await analyzeIntentWithLLM(requestBody.message, conversationContext, env);
     
     // Handle SEARCH_SPACE intent with Claude-4-Sonnet MCP call
     if (intentType === "SEARCH_SPACE") {
-      const searchResult = await handleSearchSpaceFlow(requestBody.message, requestBody.session_id, env);
+      const searchResult = await handleSearchSpaceFlow(requestBody.message, requestBody.session_id, conversationContext, env);
+      
+      // Add assistant response to session
+      const assistantMessage: SessionMessage = {
+        role: "assistant",
+        content: searchResult.llm_response,
+        intent_type: intentType,
+        timestamp: Date.now(),
+        metadata: {
+          search_results: searchResult.data
+        }
+      };
+      await addMessageToSession(requestBody.session_id, assistantMessage, env);
+      
       return new Response(JSON.stringify(searchResult), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -342,7 +448,16 @@ async function handleIntentAnalysisRequest(
     }
     
     // Handle other intents with LLM response
-    const llmResponse = await generateIntentResponse(intentType, requestBody.message, env);
+    const llmResponse = await generateIntentResponse(intentType, requestBody.message, conversationContext, env);
+    
+    // Add assistant response to session
+    const assistantMessage: SessionMessage = {
+      role: "assistant",
+      content: llmResponse,
+      intent_type: intentType,
+      timestamp: Date.now()
+    };
+    await addMessageToSession(requestBody.session_id, assistantMessage, env);
     
     const successResponse: IntentAnalysisResponseUpdated = {
       status: "SUCCESS",
@@ -386,7 +501,12 @@ function validateIntentAnalysisRequest(requestBody: any): string | null {
 /**
  * Analyzes intent using LLM
  */
-async function analyzeIntentWithLLM(message: string, env: Env): Promise<IntentType> {
+async function analyzeIntentWithLLM(message: string, conversationContext: SessionMessage[], env: Env): Promise<IntentType> {
+  // Build context from conversation history
+  const contextInfo = conversationContext.length > 0 
+    ? `\n\n이전 대화 컨텍스트:\n${conversationContext.map(msg => `${msg.role}: ${msg.content}`).join('\n')}`
+    : '';
+
   const intentAnalysisPrompt = `
 당신은 사용자의 메시지를 분석하여 의도를 파악하는 AI입니다.
 다음 3가지 의도 중 하나로 분류해주세요:
@@ -395,7 +515,7 @@ async function analyzeIntentWithLLM(message: string, env: Env): Promise<IntentTy
 2. ADD_SPACE: 새로운 공간을 등록하거나 추가하려는 의도 (예: "우리 카페 등록하고 싶어", "새로운 장소 추가")  
 3. CREATE_USER_PROFILE: 사용자 프로필을 생성하거나 수정하려는 의도 (예: "프로필 만들기", "내 정보 수정")
 
-사용자 메시지: "${message}"
+현재 사용자 메시지: "${message}"${contextInfo}
 
 위 메시지를 분석하여 SEARCH_SPACE, ADD_SPACE, CREATE_USER_PROFILE 중 하나만 응답해주세요. 다른 텍스트는 포함하지 마세요.
 `;
@@ -458,6 +578,7 @@ async function analyzeIntentWithLLM(message: string, env: Env): Promise<IntentTy
 async function handleSearchSpaceFlow(
   message: string,
   sessionId: string,
+  conversationContext: SessionMessage[],
   env: Env
 ): Promise<SearchSpaceSuccessResponse> {
   try {
@@ -482,7 +603,7 @@ async function handleSearchSpaceFlow(
                   total_count: responseSpaces.length
                 };
     
-    const llmResponse = await generateSearchResultResponse(message, toolResults, env);
+    const llmResponse = await generateSearchResultResponse(message, toolResults, conversationContext, env);
     
     // Add LLM response to the result
                     return {
@@ -519,9 +640,15 @@ async function handleSearchSpaceFlow(
 async function generateSearchResultResponse(
   originalMessage: string,
   searchResult: Omit<SearchSpaceSuccessResponse, 'llm_response' | 'search_context'>,
+  conversationContext: SessionMessage[],
   env: Env
 ): Promise<string> {
   try {
+    // Build context from conversation history
+    const contextInfo = conversationContext.length > 0 
+      ? `\n\n이전 대화 컨텍스트:\n${conversationContext.map(msg => `${msg.role}: ${msg.content}`).join('\n')}`
+      : '';
+
     let responsePrompt = "";
     
     if (searchResult.data.length > 0) {
@@ -532,17 +659,19 @@ async function generateSearchResultResponse(
       responsePrompt = `사용자 요청: "${originalMessage}"
 
 검색 결과 ${searchResult.total_count}개의 공간을 찾았습니다:
-${spaces}
+${spaces}${contextInfo}
 
 위 검색 결과를 바탕으로 사용자에게 친근하고 도움이 되는 응답을 작성해주세요. 
+이전 대화 컨텍스트를 고려하여 연속적인 대화가 자연스럽게 이어지도록 해주세요.
 공간의 특징과 이용 방법을 간단히 설명하고, 추가 질문이 있으면 언제든 물어보라고 안내해주세요.`;
     } else {
       responsePrompt = `사용자 요청: "${originalMessage}"
 
-검색 결과 조건에 맞는 공간을 찾지 못했습니다.
+검색 결과 조건에 맞는 공간을 찾지 못했습니다.${contextInfo}
 
 사용자에게 죄송하다는 말과 함께 다른 조건으로 다시 검색해보거나, 
-더 구체적인 요구사항을 알려달라고 친근하게 요청하는 응답을 작성해주세요.`;
+더 구체적인 요구사항을 알려달라고 친근하게 요청하는 응답을 작성해주세요.
+이전 대화 컨텍스트를 고려하여 연속적인 대화가 자연스럽게 이어지도록 해주세요.`;
     }
     
     const apiKey = env.ANTHROPIC_API_KEY;
@@ -589,27 +718,35 @@ ${spaces}
 async function generateIntentResponse(
   intentType: IntentType,
   message: string,
+  conversationContext: SessionMessage[],
   env: Env
 ): Promise<string> {
   try {
+    // Build context from conversation history
+    const contextInfo = conversationContext.length > 0 
+      ? `\n\n이전 대화 컨텍스트:\n${conversationContext.map(msg => `${msg.role}: ${msg.content}`).join('\n')}`
+      : '';
+
     let systemPrompt = "";
     let responsePrompt = "";
 
     switch (intentType) {
       case "ADD_SPACE":
         systemPrompt = "당신은 공간 등록을 도와주는 친근한 도우미입니다.";
-        responsePrompt = `사용자가 새로운 공간을 등록하고 싶어합니다: "${message}"
+        responsePrompt = `사용자가 새로운 공간을 등록하고 싶어합니다: "${message}"${contextInfo}
 
 공간 등록 절차를 안내하고, 필요한 정보(공간명, 주소, 시설, 연락처 등)를 
-단계별로 친근하게 요청하는 응답을 작성해주세요.`;
+단계별로 친근하게 요청하는 응답을 작성해주세요.
+이전 대화 컨텍스트를 고려하여 연속적인 대화가 자연스럽게 이어지도록 해주세요.`;
         break;
         
       case "CREATE_USER_PROFILE":
         systemPrompt = "당신은 사용자 프로필 생성을 도와주는 친근한 도우미입니다.";
-        responsePrompt = `사용자가 프로필을 만들고 싶어합니다: "${message}"
+        responsePrompt = `사용자가 프로필을 만들고 싶어합니다: "${message}"${contextInfo}
 
 프로필 생성 과정을 안내하고, 필요한 정보(이름, 관심사, 선호하는 공간 타입 등)를 
-단계별로 친근하게 요청하는 응답을 작성해주세요.`;
+단계별로 친근하게 요청하는 응답을 작성해주세요.
+이전 대화 컨텍스트를 고려하여 연속적인 대화가 자연스럽게 이어지도록 해주세요.`;
         break;
         
       default:

@@ -251,6 +251,24 @@ export interface SearchContext {
   excluded_spaces: number[];
 }
 
+export interface SessionMessage {
+  role: "user" | "assistant";
+  content: string;
+  intent_type?: IntentType;
+  timestamp: number;
+  metadata?: {
+    search_results?: SpaceInfo[];
+    registration_step?: number;
+  };
+}
+
+export interface ChatSession {
+  session_id: string;
+  messages: SessionMessage[];
+  last_updated: number;
+  created_at: number;
+}
+
 /**
  * SEARCH_SPACE specific success response with data field
  */
