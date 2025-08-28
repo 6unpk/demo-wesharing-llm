@@ -35,6 +35,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.60.0",
+    "@google/generative-ai": "^0.24.1",
     "@langchain/anthropic": "^0.3.26",
     "@langchain/community": "^0.3.53",
     "@langchain/core": "^0.3.72",

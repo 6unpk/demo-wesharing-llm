@@ -9,9 +9,9 @@ export interface Env {
   AI: Ai;
 
   /**
-   * Anthropic API Key for Claude-4-Sonnet MCP calls
+   * Google AI Studio Token for Gemini calls
    */
-  ANTHROPIC_API_KEY: string;
+  GOOGLE_AI_STUDIO_TOKEN: string;
 
 
 

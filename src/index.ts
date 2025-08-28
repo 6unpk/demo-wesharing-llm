@@ -21,11 +21,10 @@ import {
   SpaceRegistrationStep
 } from "./types";
 import type { KVSpaceData } from "./types";
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 // Model ID for Workers AI model
 // https://developers.cloudflare.com/workers-ai/models/
-const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
 // Space registration steps
 const SPACE_REGISTRATION_STEPS: SpaceRegistrationStep[] = [
@@ -249,43 +248,35 @@ async function extractSpaceDataFromMessage(
 - 추출할 수 없거나 부족한 정보가 있으면 is_valid를 false로 설정
 `;
 
-    const apiKey = env.ANTHROPIC_API_KEY;
-    const accountId = "b227edcf71da28cffe319fe486c42e39";
-    const gatewayId = "my-gateway";
-    const baseURL = `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/anthropic`;
+    const api_token = env.GOOGLE_AI_STUDIO_TOKEN;
+    const account_id = "b227edcf71da28cffe319fe486c42e39";
+    const gateway_name = "my-gateway";
 
-    const anthropic = new Anthropic({
-      apiKey,
-      baseURL,
-    });
+    const genAI = new GoogleGenerativeAI(api_token);
+    const model = genAI.getGenerativeModel(
+      { model: "gemini-1.5-flash" },
+      {
+        baseUrl: `https://gateway.ai.cloudflare.com/v1/${account_id}/${gateway_name}/google-ai-studio`,
+      },
+    );
 
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
-      messages: [
-        {
-          role: "user",
-          content: extractionPrompt
-        }
-      ],
-      max_tokens: 1024,
-    });
-
-    const content = response.content[0];
-    if (content && 'text' in content) {
-      try {
-        const result = JSON.parse(content.text);
-        return {
-          extracted: result.extracted_value,
-          isValid: result.is_valid,
-          error: result.error_message
-        };
-      } catch (parseError) {
-        return {
-          extracted: null,
-          isValid: false,
-          error: "응답을 파싱할 수 없습니다."
-        };
-      }
+    const result = await model.generateContent(extractionPrompt);
+    const response = await result.response;
+    const responseText = response.text();
+    
+    try {
+      const parsedResult = JSON.parse(responseText);
+      return {
+        extracted: parsedResult.extracted_value,
+        isValid: parsedResult.is_valid,
+        error: parsedResult.error_message
+      };
+    } catch (parseError) {
+      return {
+        extracted: null,
+        isValid: false,
+        error: "응답을 파싱할 수 없습니다."
+      };
     }
     
     return {
@@ -745,26 +736,21 @@ async function analyzeIntentWithLLM(message: string, conversationContext: Sessio
   ];
 
   try {
-    const response = await env.AI.run(MODEL_ID, {
-        messages,
-      max_tokens: 50,
-      temperature: 0.1, // Low temperature for consistent classification
-    });
+    const api_token = env.GOOGLE_AI_STUDIO_TOKEN;
+    const account_id = "b227edcf71da28cffe319fe486c42e39";
+    const gateway_name = "my-gateway";
 
-    let intentResult = "";
-    try {
-      if (typeof response === "string") {
-        intentResult = String(response).trim().toUpperCase();
-      } else if (response && typeof response === "object") {
-        const responseObj = response as Record<string, any>;
-        if (responseObj.response && typeof responseObj.response === "string") {
-          intentResult = String(responseObj.response).trim().toUpperCase();
-        }
-      }
-    } catch (error) {
-      console.warn("Error processing LLM response:", error);
-      intentResult = "";
-    }
+    const genAI = new GoogleGenerativeAI(api_token);
+    const model = genAI.getGenerativeModel(
+      { model: "gemini-1.5-flash" },
+      {
+        baseUrl: `https://gateway.ai.cloudflare.com/v1/${account_id}/${gateway_name}/google-ai-studio`,
+      },
+    );
+
+    const result = await model.generateContent(intentAnalysisPrompt);
+    const response = await result.response;
+    const intentResult = response.text().trim().toUpperCase();
 
     // Validate and return intent type
     if (intentResult.includes("SEARCH_SPACE")) {
@@ -1026,33 +1012,21 @@ ${spaces}${contextInfo}
 이전 대화 컨텍스트를 고려하여 연속적인 대화가 자연스럽게 이어지도록 해주세요.`;
     }
     
-    const apiKey = env.ANTHROPIC_API_KEY;
-    const accountId = "b227edcf71da28cffe319fe486c42e39"; // 실제 account_id로 교체 필요
-    const gatewayId = "my-gateway"; // 실제 gateway_id로 교체 필요
-    const baseURL = `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/anthropic`;
+    const api_token = env.GOOGLE_AI_STUDIO_TOKEN;
+    const account_id = "b227edcf71da28cffe319fe486c42e39";
+    const gateway_name = "my-gateway";
 
-    console.log(apiKey);
-    const anthropic = new Anthropic({
-      apiKey,
-      baseURL,
-    });
+    const genAI = new GoogleGenerativeAI(api_token);
+    const model = genAI.getGenerativeModel(
+      { model: "gemini-1.5-flash" },
+      {
+        baseUrl: `https://gateway.ai.cloudflare.com/v1/${account_id}/${gateway_name}/google-ai-studio`,
+      },
+    );
 
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
-      messages: [
-        {
-          role: "user",
-          content: responsePrompt
-        }
-      ],
-      max_tokens: 1024,
-    });
-
-    const content = response.content[0];
-    if (content && 'text' in content) {
-      return content.text;
-    }
-    return "응답을 생성할 수 없습니다.";
+    const result = await model.generateContent(responsePrompt);
+    const response = await result.response;
+    return response.text();
   } catch (error) {
     console.error("Error generating search response:", error);
     
@@ -1105,34 +1079,22 @@ async function generateIntentResponse(
         return "안녕하세요! 무엇을 도와드릴까요?";
     }
 
-    const apiKey = env.ANTHROPIC_API_KEY;
-    const accountId = "your_account_id"; // 실제 account_id로 교체 필요
-    const gatewayId = "your_gateway_id"; // 실제 gateway_id로 교체 필요
-    const baseURL = `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/anthropic`;
+    const api_token = env.GOOGLE_AI_STUDIO_TOKEN;
+    const account_id = "b227edcf71da28cffe319fe486c42e39";
+    const gateway_name = "my-gateway";
 
-    const anthropic = new Anthropic({
-      apiKey,
-      baseURL,
-    });
+    const genAI = new GoogleGenerativeAI(api_token);
+    const model = genAI.getGenerativeModel(
+      { model: "gemini-1.5-flash" },
+      {
+        baseUrl: `https://gateway.ai.cloudflare.com/v1/${account_id}/${gateway_name}/google-ai-studio`,
+      },
+    );
 
-    const response = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20241022",
-      system: systemPrompt,
-      messages: [
-        {
-          role: "user",
-          content: responsePrompt
-        }
-      ],
-      max_tokens: 1024,
-      temperature: 0.3,
-    });
-
-    const content = response.content[0];
-    if (content && 'text' in content) {
-      return content.text;
-    }
-    return "응답을 생성할 수 없습니다.";
+    const fullPrompt = systemPrompt ? `${systemPrompt}\n\n${responsePrompt}` : responsePrompt;
+    const result = await model.generateContent(fullPrompt);
+    const response = await result.response;
+    return response.text();
   } catch (error) {
     console.error("Error generating intent response:", error);
     
