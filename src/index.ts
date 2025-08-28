@@ -474,26 +474,23 @@ async function handleSearchSpaceFlow(
     const responseSpaces = filteredSpaces.map(convertKVSpaceToSpaceInfo);
     
     // Generate LLM response based on search results
-    const toolResults: Omit<SearchSpaceSuccessResponse, 'llm_response'> = {
-      status: "SUCCESS",
-      intent_type: "SEARCH_SPACE",
-      data: responseSpaces,
-      total_count: responseSpaces.length,
-      search_context: {
-        filters_used: extractFiltersFromMessage(message),
-        result_count: responseSpaces.length,
-        search_mode: "KV_DIRECT_SEARCH",
-        excluded_spaces: []
-      }
-    };
+                    const toolResults: Omit<SearchSpaceSuccessResponse, 'llm_response' | 'search_context'> = {
+                  status: "SUCCESS",
+                  intent_type: "SEARCH_SPACE",
+                  data: responseSpaces,
+                  total_count: responseSpaces.length
+                };
     
     const llmResponse = await generateSearchResultResponse(message, toolResults, env);
     
     // Add LLM response to the result
-    return {
-      ...toolResults,
-      llm_response: llmResponse
-    };
+                    return {
+                  status: "SUCCESS",
+                  intent_type: "SEARCH_SPACE",
+                  data: toolResults.data,
+                  total_count: toolResults.total_count,
+                  llm_response: llmResponse
+                };
   } catch (error) {
     console.error("Error in handleSearchSpaceFlow:", error);
     
@@ -520,7 +517,7 @@ async function handleSearchSpaceFlow(
  */
 async function generateSearchResultResponse(
   originalMessage: string,
-  searchResult: Omit<SearchSpaceSuccessResponse, 'llm_response'>,
+  searchResult: Omit<SearchSpaceSuccessResponse, 'llm_response' | 'search_context'>,
   env: Env
 ): Promise<string> {
   try {

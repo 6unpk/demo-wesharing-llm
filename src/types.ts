@@ -259,7 +259,7 @@ export interface SearchSpaceSuccessResponse {
   intent_type: "SEARCH_SPACE";
   data: SpaceInfo[];
   total_count: number;
-  search_context: SearchContext;
+  search_context?: SearchContext;
   llm_response: string;
 }
 
