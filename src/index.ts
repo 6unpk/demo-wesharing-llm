@@ -16,7 +16,9 @@ import {
   SearchSpaceSuccessResponse,
   SpaceInfo,
   ChatSession,
-  SessionMessage
+  SessionMessage,
+  SpaceRegistrationState,
+  SpaceRegistrationStep
 } from "./types";
 import type { KVSpaceData } from "./types";
 import Anthropic from "@anthropic-ai/sdk";
@@ -24,6 +26,66 @@ import Anthropic from "@anthropic-ai/sdk";
 // Model ID for Workers AI model
 // https://developers.cloudflare.com/workers-ai/models/
 const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+
+// Space registration steps
+const SPACE_REGISTRATION_STEPS: SpaceRegistrationStep[] = [
+  {
+    step: 1,
+    field_name: "name",
+    description: "공간의 이름",
+    required: true,
+    example: "예: '홍대 카페', '스튜디오 A'"
+  },
+  {
+    step: 2,
+    field_name: "address",
+    description: "공간의 주소",
+    required: true,
+    example: "예: '서울특별시 마포구 홍대로 123'"
+  },
+  {
+    step: 3,
+    field_name: "space_type",
+    description: "공간 유형",
+    required: true,
+    example: "예: 'Indoor', 'Outdoor', 'Semi-Private'"
+  },
+  {
+    step: 4,
+    field_name: "max_capacity",
+    description: "최대 수용 인원",
+    required: true,
+    example: "예: 10, 20, 50"
+  },
+  {
+    step: 5,
+    field_name: "area_size",
+    description: "면적 (제곱미터)",
+    required: true,
+    example: "예: 30, 50, 100"
+  },
+  {
+    step: 6,
+    field_name: "amenities",
+    description: "시설 및 편의시설",
+    required: false,
+    example: "예: '전기, 의자, 테이블, 음향시설'"
+  },
+  {
+    step: 7,
+    field_name: "fee_policy",
+    description: "이용료 정책",
+    required: true,
+    example: "예: '무료', '시간당 10,000원', '일일 50,000원'"
+  },
+  {
+    step: 8,
+    field_name: "opening_hours",
+    description: "운영 시간",
+    required: true,
+    example: "예: '평일 09:00-18:00, 주말 10:00-17:00'"
+  }
+];
 
 /**
  * Get chat session from KV
@@ -102,6 +164,168 @@ async function getConversationContext(sessionId: string, env: Env): Promise<Sess
   } catch (error) {
     console.error("Error getting conversation context:", error);
     return [];
+  }
+}
+
+/**
+ * Get space registration state from KV
+ */
+async function getSpaceRegistrationState(sessionId: string, env: Env): Promise<SpaceRegistrationState | null> {
+  try {
+    const stateKey = `space_registration:${sessionId}`;
+    const stateData = await env.KV.get(stateKey, "json") as SpaceRegistrationState | null;
+    return stateData;
+  } catch (error) {
+    console.error("Error getting space registration state:", error);
+    return null;
+  }
+}
+
+/**
+ * Save space registration state to KV
+ */
+async function saveSpaceRegistrationState(state: SpaceRegistrationState, env: Env): Promise<void> {
+  try {
+    const stateKey = `space_registration:${state.session_id}`;
+    await env.KV.put(stateKey, JSON.stringify(state));
+  } catch (error) {
+    console.error("Error saving space registration state:", error);
+  }
+}
+
+/**
+ * Initialize space registration state
+ */
+async function initializeSpaceRegistration(sessionId: string, env: Env): Promise<SpaceRegistrationState> {
+  const state: SpaceRegistrationState = {
+    session_id: sessionId,
+    step: 1,
+    collected_data: {},
+    required_fields: SPACE_REGISTRATION_STEPS.map(step => step.field_name),
+    last_updated: Date.now()
+  };
+  
+  await saveSpaceRegistrationState(state, env);
+  return state;
+}
+
+/**
+ * Extract structured data from user message using LLM
+ */
+async function extractSpaceDataFromMessage(
+  message: string, 
+  currentStep: SpaceRegistrationStep,
+  conversationContext: SessionMessage[],
+  env: Env
+): Promise<{ extracted: any; isValid: boolean; error?: string }> {
+  try {
+    const contextInfo = conversationContext.length > 0 
+      ? `\n\n이전 대화 컨텍스트:\n${conversationContext.map(msg => `${msg.role}: ${msg.content}`).join('\n')}`
+      : '';
+
+    const extractionPrompt = `
+당신은 사용자의 메시지에서 공간 정보를 추출하는 AI입니다.
+
+현재 수집 중인 정보: ${currentStep.description}
+필드명: ${currentStep.field_name}
+예시: ${currentStep.example}
+필수 여부: ${currentStep.required ? '필수' : '선택'}
+
+사용자 메시지: "${message}"${contextInfo}
+
+위 메시지에서 ${currentStep.description}에 해당하는 정보를 추출하여 JSON 형태로 응답해주세요.
+
+응답 형식:
+{
+  "extracted_value": "추출된 값",
+  "is_valid": true/false,
+  "error_message": "오류가 있다면 설명"
+}
+
+주의사항:
+- 숫자 필드(예: max_capacity, area_size)는 숫자로 변환
+- 배열 필드(예: amenities)는 쉼표로 구분된 문자열을 배열로 변환
+- 운영시간은 구조화된 형태로 변환
+- 추출할 수 없거나 부족한 정보가 있으면 is_valid를 false로 설정
+`;
+
+    const apiKey = env.ANTHROPIC_API_KEY;
+    const accountId = "b227edcf71da28cffe319fe486c42e39";
+    const gatewayId = "my-gateway";
+    const baseURL = `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/anthropic`;
+
+    const anthropic = new Anthropic({
+      apiKey,
+      baseURL,
+    });
+
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-20250514",
+      messages: [
+        {
+          role: "user",
+          content: extractionPrompt
+        }
+      ],
+      max_tokens: 1024,
+    });
+
+    const content = response.content[0];
+    if (content && 'text' in content) {
+      try {
+        const result = JSON.parse(content.text);
+        return {
+          extracted: result.extracted_value,
+          isValid: result.is_valid,
+          error: result.error_message
+        };
+      } catch (parseError) {
+        return {
+          extracted: null,
+          isValid: false,
+          error: "응답을 파싱할 수 없습니다."
+        };
+      }
+    }
+    
+    return {
+      extracted: null,
+      isValid: false,
+      error: "응답을 생성할 수 없습니다."
+    };
+  } catch (error) {
+    console.error("Error extracting space data:", error);
+    return {
+      extracted: null,
+      isValid: false,
+      error: "데이터 추출 중 오류가 발생했습니다."
+    };
+  }
+}
+
+/**
+ * Generate space ID
+ */
+async function generateSpaceId(env: Env): Promise<string> {
+  try {
+    // Get all space keys to find the highest number
+    const { keys } = await env.KV.list({ prefix: "space-" });
+    let maxNumber = 0;
+    
+    for (const key of keys) {
+      const match = key.name.match(/space-(\d+)/);
+      if (match) {
+        const number = parseInt(match[1]);
+        if (number > maxNumber) {
+          maxNumber = number;
+        }
+      }
+    }
+    
+    return `space-${maxNumber + 1}`;
+  } catch (error) {
+    console.error("Error generating space ID:", error);
+    return `space-${Date.now()}`;
   }
 }
 
@@ -265,32 +489,6 @@ function convertKVSpaceToSpaceInfo(kvSpace: KVSpaceData): SpaceInfo {
   };
 }
 
-/**
- * Extract basic filters from user message
- */
-function extractFiltersFromMessage(message: string): any {
-  const filters: any = {};
-  const lowerMessage = message || '';
-  
-  // Extract location
-  if (lowerMessage.includes("인천")) filters.address = "인천광역시";
-  if (lowerMessage.includes("서울")) filters.address = "서울특별시";
-  if (lowerMessage.includes("부산")) filters.address = "부산광역시";
-  
-  // Extract amenities
-  const amenities = [];
-  if (lowerMessage.includes("오디오")) amenities.push("오디오");
-  if (lowerMessage.includes("마이크")) amenities.push("마이크");
-  if (lowerMessage.includes("프로젝터")) amenities.push("프로젝터");
-  if (amenities.length > 0) filters.amenities = amenities;
-  
-  return filters;
-}
-
-// Default system prompt
-const SYSTEM_PROMPT =
-  "You are a helpful, friendly assistant. Provide concise and accurate responses.";
-
 export default {
   /**
    * Main request handler for the Worker
@@ -425,7 +623,9 @@ async function handleIntentAnalysisRequest(
     // Analyze intent using LLM with context
     const intentType = await analyzeIntentWithLLM(requestBody.message, conversationContext, env);
     
-    // Handle SEARCH_SPACE intent with Claude-4-Sonnet MCP call
+    // Handle different intents
+    let response: IntentAnalysisResponseUpdated;
+    
     if (intentType === "SEARCH_SPACE") {
       const searchResult = await handleSearchSpaceFlow(requestBody.message, requestBody.session_id, conversationContext, env);
       
@@ -441,31 +641,44 @@ async function handleIntentAnalysisRequest(
       };
       await addMessageToSession(requestBody.session_id, assistantMessage, env);
       
-      return new Response(JSON.stringify(searchResult), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+      response = searchResult;
+    } else if (intentType === "ADD_SPACE") {
+      const addSpaceResult = await handleAddSpaceFlow(requestBody.message, requestBody.session_id, conversationContext, env);
+      
+      // Add assistant response to session
+      const assistantMessage: SessionMessage = {
+        role: "assistant",
+        content: addSpaceResult.llm_response,
+        intent_type: intentType,
+        timestamp: Date.now(),
+        metadata: addSpaceResult.is_completed ? {
+          space_id: addSpaceResult.space_id
+        } : undefined
+      };
+      await addMessageToSession(requestBody.session_id, assistantMessage, env);
+      
+      response = addSpaceResult;
+    } else {
+      // Handle other intents with LLM response
+      const llmResponse = await generateIntentResponse(intentType, requestBody.message, conversationContext, env);
+      
+      // Add assistant response to session
+      const assistantMessage: SessionMessage = {
+        role: "assistant",
+        content: llmResponse,
+        intent_type: intentType,
+        timestamp: Date.now()
+      };
+      await addMessageToSession(requestBody.session_id, assistantMessage, env);
+      
+      response = {
+        status: "SUCCESS",
+        intent_type: intentType as "ADD_SPACE" | "CREATE_USER_PROFILE",
+        llm_response: llmResponse
+      };
     }
-    
-    // Handle other intents with LLM response
-    const llmResponse = await generateIntentResponse(intentType, requestBody.message, conversationContext, env);
-    
-    // Add assistant response to session
-    const assistantMessage: SessionMessage = {
-      role: "assistant",
-      content: llmResponse,
-      intent_type: intentType,
-      timestamp: Date.now()
-    };
-    await addMessageToSession(requestBody.session_id, assistantMessage, env);
-    
-    const successResponse: IntentAnalysisResponseUpdated = {
-      status: "SUCCESS",
-      intent_type: intentType,
-      llm_response: llmResponse,
-    };
 
-    return new Response(JSON.stringify(successResponse), {
+    return new Response(JSON.stringify(response), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
@@ -569,6 +782,145 @@ async function analyzeIntentWithLLM(message: string, conversationContext: Sessio
     console.error("Error in LLM intent analysis:", error);
     // Default to SEARCH_SPACE on error
     return "SEARCH_SPACE";
+  }
+}
+
+/**
+ * Handles ADD_SPACE flow with step-by-step data collection
+ */
+async function handleAddSpaceFlow(
+  message: string,
+  sessionId: string,
+  conversationContext: SessionMessage[],
+  env: Env
+): Promise<{ status: "SUCCESS"; intent_type: "ADD_SPACE"; llm_response: string; is_completed?: boolean; space_id?: string }> {
+  try {
+    console.log("Starting ADD_SPACE flow");
+
+    // Get or initialize registration state
+    let state = await getSpaceRegistrationState(sessionId, env);
+    if (!state) {
+      state = await initializeSpaceRegistration(sessionId, env);
+    }
+
+    const currentStep = SPACE_REGISTRATION_STEPS.find(step => step.step === state.step);
+    if (!currentStep) {
+      return {
+        status: "SUCCESS",
+        intent_type: "ADD_SPACE",
+        llm_response: "공간 등록 과정에서 오류가 발생했습니다. 다시 시작해주세요."
+      };
+    }
+
+    // Extract data from user message
+    const extractionResult = await extractSpaceDataFromMessage(message, currentStep, conversationContext, env);
+
+    if (extractionResult.isValid && extractionResult.extracted !== null) {
+      // Save extracted data
+      state.collected_data[currentStep.field_name as keyof KVSpaceData] = extractionResult.extracted;
+      state.last_updated = Date.now();
+
+      // Move to next step
+      state.step++;
+
+      // Check if all required fields are completed
+      const isCompleted = state.step > SPACE_REGISTRATION_STEPS.length;
+      
+      if (isCompleted) {
+        // Save the complete space data to KV
+        const spaceId = await generateSpaceId(env);
+        const completeSpaceData: KVSpaceData = {
+          space_id: spaceId,
+          name: state.collected_data.name || "",
+          space_type: state.collected_data.space_type || "",
+          address: state.collected_data.address || "",
+          coordinate: state.collected_data.coordinate || { lat: 0, lng: 0 },
+          access_type: "open",
+          min_capacity: null,
+          max_capacity: state.collected_data.max_capacity || 0,
+          area_size: state.collected_data.area_size || 0,
+          sensors: { noise: false, cctv: false },
+          opening_hours: state.collected_data.opening_hours || {
+            monday: "closed",
+            tuesday: "closed",
+            wednesday: "closed",
+            thursday: "closed",
+            friday: "closed",
+            saturday: "closed",
+            sunday: "closed",
+            holidays: "closed",
+            notes: null
+          },
+          booking_policy: {
+            cancellation: false,
+            modification: true,
+            reservation_required: false,
+            deposit_required: false
+          },
+          min_mins_per_use: null,
+          max_mins_per_use: null,
+          fee_policy: state.collected_data.fee_policy || "",
+          status: "active",
+          last_updated: new Date().toISOString(),
+          amenities: state.collected_data.amenities || [],
+          accessibility: [],
+          memory_narrative: "",
+          characteristics: {},
+          temporal_pattern: {},
+          outcome_affordance: {},
+          governance_mode: {},
+          norm: {},
+          owner_entity: "user"
+        };
+
+        await env.KV.put(spaceId, JSON.stringify(completeSpaceData));
+
+        // Clear registration state
+        await env.KV.delete(`space_registration:${sessionId}`);
+
+        return {
+          status: "SUCCESS",
+          intent_type: "ADD_SPACE",
+          llm_response: `축하합니다! 공간 등록이 완료되었습니다. 🎉\n\n등록된 공간 정보:\n- 이름: ${completeSpaceData.name}\n- 주소: ${completeSpaceData.address}\n- 유형: ${completeSpaceData.space_type}\n- 수용 인원: ${completeSpaceData.max_capacity}명\n- 면적: ${completeSpaceData.area_size}㎡\n- 이용료: ${completeSpaceData.fee_policy}\n\n공간 ID: ${spaceId}\n\n이제 다른 사용자들이 이 공간을 검색할 수 있습니다. 추가로 수정하고 싶은 정보가 있으시면 언제든 말씀해 주세요!`,
+          is_completed: true,
+          space_id: spaceId
+        };
+      } else {
+        // Continue to next step
+        await saveSpaceRegistrationState(state, env);
+        
+        const nextStep = SPACE_REGISTRATION_STEPS.find(step => step.step === state.step);
+        if (nextStep) {
+          return {
+            status: "SUCCESS",
+            intent_type: "ADD_SPACE",
+            llm_response: `좋습니다! ${currentStep.description}이(가) 등록되었습니다.\n\n다음으로 ${nextStep.description}을(를) 알려주세요.\n${nextStep.example}`
+          };
+        }
+      }
+    } else {
+      // Invalid data, ask for clarification
+      await saveSpaceRegistrationState(state, env);
+      
+      return {
+        status: "SUCCESS",
+        intent_type: "ADD_SPACE",
+        llm_response: `죄송합니다. ${currentStep.description}을(를) 정확히 파악하지 못했습니다.\n\n${currentStep.example}\n\n다시 한 번 알려주시겠어요?`
+      };
+    }
+
+    return {
+      status: "SUCCESS",
+      intent_type: "ADD_SPACE",
+      llm_response: "공간 등록 과정에서 오류가 발생했습니다. 다시 시작해주세요."
+    };
+  } catch (error) {
+    console.error("Error in handleAddSpaceFlow:", error);
+    return {
+      status: "SUCCESS",
+      intent_type: "ADD_SPACE",
+      llm_response: "공간 등록 중 오류가 발생했습니다. 다시 시도해주세요."
+    };
   }
 }
 

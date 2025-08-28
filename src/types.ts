@@ -259,6 +259,7 @@ export interface SessionMessage {
   metadata?: {
     search_results?: SpaceInfo[];
     registration_step?: number;
+    space_id?: string;
   };
 }
 
@@ -267,6 +268,22 @@ export interface ChatSession {
   messages: SessionMessage[];
   last_updated: number;
   created_at: number;
+}
+
+export interface SpaceRegistrationState {
+  session_id: string;
+  step: number;
+  collected_data: Partial<KVSpaceData>;
+  required_fields: string[];
+  last_updated: number;
+}
+
+export interface SpaceRegistrationStep {
+  step: number;
+  field_name: string;
+  description: string;
+  required: boolean;
+  example: string;
 }
 
 /**
