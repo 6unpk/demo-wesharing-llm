@@ -21,7 +21,7 @@ import {
   SpaceRegistrationStep
 } from "./types";
 import type { KVSpaceData } from "./types";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+
 
 // Model ID for Workers AI model
 // https://developers.cloudflare.com/workers-ai/models/
@@ -225,6 +225,8 @@ async function extractSpaceDataFromMessage(
     const extractionPrompt = `
 당신은 사용자의 메시지에서 공간 정보를 추출하는 AI입니다.
 
+중요: 반드시 한국어로만 응답해주세요. 영어나 다른 언어는 사용하지 마세요.
+
 현재 수집 중인 정보: ${currentStep.description}
 필드명: ${currentStep.field_name}
 예시: ${currentStep.example}
@@ -242,27 +244,26 @@ async function extractSpaceDataFromMessage(
 }
 
 주의사항:
+- 반드시 한국어로만 응답하세요
 - 숫자 필드(예: max_capacity, area_size)는 숫자로 변환
 - 배열 필드(예: amenities)는 쉼표로 구분된 문자열을 배열로 변환
 - 운영시간은 구조화된 형태로 변환
 - 추출할 수 없거나 부족한 정보가 있으면 is_valid를 false로 설정
 `;
 
-    const api_token = env.GOOGLE_AI_STUDIO_TOKEN;
-    const account_id = "b227edcf71da28cffe319fe486c42e39";
-    const gateway_name = "my-gateway";
-
-    const genAI = new GoogleGenerativeAI(api_token);
-    const model = genAI.getGenerativeModel(
-      { model: "gemini-1.5-flash" },
+    // Cloudflare Workers AI의 Llama 모델 사용
+    const response = await env.AI.run(
+      "@cf/meta/llama-2-7b-chat-int8",
       {
-        baseUrl: `https://gateway.ai.cloudflare.com/v1/${account_id}/${gateway_name}/google-ai-studio`,
-      },
+        messages: [{
+          role: "user",
+          content: extractionPrompt
+        }],
+        max_tokens: 1024,
+      }
     );
 
-    const result = await model.generateContent(extractionPrompt);
-    const response = await result.response;
-    const responseText = response.text();
+    const responseText = response.response || '';
     
     try {
       const parsedResult = JSON.parse(responseText);
@@ -713,6 +714,9 @@ async function analyzeIntentWithLLM(message: string, conversationContext: Sessio
 
   const intentAnalysisPrompt = `
 당신은 사용자의 메시지를 분석하여 의도를 파악하는 AI입니다.
+
+중요: 반드시 한국어로만 응답해주세요. 영어나 다른 언어는 사용하지 마세요.
+
 다음 3가지 의도 중 하나로 분류해주세요:
 
 1. SEARCH_SPACE: 공간을 찾거나 검색하려는 의도 (예: "홍대 근처 카페 찾아줘", "4명이서 갈 수 있는 식당")
@@ -722,6 +726,8 @@ async function analyzeIntentWithLLM(message: string, conversationContext: Sessio
 현재 사용자 메시지: "${message}"${contextInfo}
 
 위 메시지를 분석하여 SEARCH_SPACE, ADD_SPACE, CREATE_USER_PROFILE 중 하나만 응답해주세요. 다른 텍스트는 포함하지 마세요.
+
+주의: 반드시 한국어로만 응답하세요.
 `;
 
   const messages: ChatMessage[] = [
@@ -736,21 +742,19 @@ async function analyzeIntentWithLLM(message: string, conversationContext: Sessio
   ];
 
   try {
-    const api_token = env.GOOGLE_AI_STUDIO_TOKEN;
-    const account_id = "b227edcf71da28cffe319fe486c42e39";
-    const gateway_name = "my-gateway";
-
-    const genAI = new GoogleGenerativeAI(api_token);
-    const model = genAI.getGenerativeModel(
-      { model: "gemini-1.5-flash" },
+    // Cloudflare Workers AI의 Llama 모델 사용
+    const response = await env.AI.run(
+      "@cf/meta/llama-2-7b-chat-int8",
       {
-        baseUrl: `https://gateway.ai.cloudflare.com/v1/${account_id}/${gateway_name}/google-ai-studio`,
-      },
+        messages: [{
+          role: "user",
+          content: intentAnalysisPrompt
+        }],
+        max_tokens: 1024,
+      }
     );
 
-    const result = await model.generateContent(intentAnalysisPrompt);
-    const response = await result.response;
-    const intentResult = response.text().trim().toUpperCase();
+    const intentResult = (response.response || '').trim().toUpperCase();
 
     // Validate and return intent type
     if (intentResult.includes("SEARCH_SPACE")) {
@@ -994,39 +998,45 @@ async function generateSearchResultResponse(
         `- ${space.name} (${space.address}): ${space.amenities.join(', ')} 이용 가능`
       ).join('\n');
       
-      responsePrompt = `사용자 요청: "${originalMessage}"
+      responsePrompt = `중요: 반드시 한국어로만 응답해주세요. 영어나 다른 언어는 사용하지 마세요.
+
+사용자 요청: "${originalMessage}"
 
 검색 결과 ${searchResult.total_count}개의 공간을 찾았습니다:
 ${spaces}${contextInfo}
 
 위 검색 결과를 바탕으로 사용자에게 친근하고 도움이 되는 응답을 작성해주세요. 
 이전 대화 컨텍스트를 고려하여 연속적인 대화가 자연스럽게 이어지도록 해주세요.
-공간의 특징과 이용 방법을 간단히 설명하고, 추가 질문이 있으면 언제든 물어보라고 안내해주세요.`;
+공간의 특징과 이용 방법을 간단히 설명하고, 추가 질문이 있으면 언제든 물어보라고 안내해주세요.
+
+주의: 반드시 한국어로만 응답하세요.`;
     } else {
-      responsePrompt = `사용자 요청: "${originalMessage}"
+      responsePrompt = `중요: 반드시 한국어로만 응답해주세요. 영어나 다른 언어는 사용하지 마세요.
+
+사용자 요청: "${originalMessage}"
 
 검색 결과 조건에 맞는 공간을 찾지 못했습니다.${contextInfo}
 
 사용자에게 죄송하다는 말과 함께 다른 조건으로 다시 검색해보거나, 
 더 구체적인 요구사항을 알려달라고 친근하게 요청하는 응답을 작성해주세요.
-이전 대화 컨텍스트를 고려하여 연속적인 대화가 자연스럽게 이어지도록 해주세요.`;
+이전 대화 컨텍스트를 고려하여 연속적인 대화가 자연스럽게 이어지도록 해주세요.
+
+주의: 반드시 한국어로만 응답하세요.`;
     }
     
-    const api_token = env.GOOGLE_AI_STUDIO_TOKEN;
-    const account_id = "b227edcf71da28cffe319fe486c42e39";
-    const gateway_name = "my-gateway";
-
-    const genAI = new GoogleGenerativeAI(api_token);
-    const model = genAI.getGenerativeModel(
-      { model: "gemini-1.5-flash" },
+    // Cloudflare Workers AI의 Llama 모델 사용
+    const response = await env.AI.run(
+      "@cf/meta/llama-2-7b-chat-int8",
       {
-        baseUrl: `https://gateway.ai.cloudflare.com/v1/${account_id}/${gateway_name}/google-ai-studio`,
-      },
+        messages: [{
+          role: "user",
+          content: responsePrompt
+        }],
+        max_tokens: 1024,
+      }
     );
 
-    const result = await model.generateContent(responsePrompt);
-    const response = await result.response;
-    return response.text();
+    return response.response || '';
   } catch (error) {
     console.error("Error generating search response:", error);
     
@@ -1058,43 +1068,50 @@ async function generateIntentResponse(
 
     switch (intentType) {
       case "ADD_SPACE":
-        systemPrompt = "당신은 공간 등록을 도와주는 친근한 도우미입니다.";
-        responsePrompt = `사용자가 새로운 공간을 등록하고 싶어합니다: "${message}"${contextInfo}
+        systemPrompt = "당신은 공간 등록을 도와주는 친근한 도우미입니다. 반드시 한국어로만 응답해주세요.";
+        responsePrompt = `중요: 반드시 한국어로만 응답해주세요. 영어나 다른 언어는 사용하지 마세요.
+
+사용자가 새로운 공간을 등록하고 싶어합니다: "${message}"${contextInfo}
 
 공간 등록 절차를 안내하고, 필요한 정보(공간명, 주소, 시설, 연락처 등)를 
 단계별로 친근하게 요청하는 응답을 작성해주세요.
-이전 대화 컨텍스트를 고려하여 연속적인 대화가 자연스럽게 이어지도록 해주세요.`;
+이전 대화 컨텍스트를 고려하여 연속적인 대화가 자연스럽게 이어지도록 해주세요.
+
+주의: 반드시 한국어로만 응답하세요.`;
         break;
         
       case "CREATE_USER_PROFILE":
-        systemPrompt = "당신은 사용자 프로필 생성을 도와주는 친근한 도우미입니다.";
-        responsePrompt = `사용자가 프로필을 만들고 싶어합니다: "${message}"${contextInfo}
+        systemPrompt = "당신은 사용자 프로필 생성을 도와주는 친근한 도우미입니다. 반드시 한국어로만 응답해주세요.";
+        responsePrompt = `중요: 반드시 한국어로만 응답해주세요. 영어나 다른 언어는 사용하지 마세요.
+
+사용자가 프로필을 만들고 싶어합니다: "${message}"${contextInfo}
 
 프로필 생성 과정을 안내하고, 필요한 정보(이름, 관심사, 선호하는 공간 타입 등)를 
 단계별로 친근하게 요청하는 응답을 작성해주세요.
-이전 대화 컨텍스트를 고려하여 연속적인 대화가 자연스럽게 이어지도록 해주세요.`;
+이전 대화 컨텍스트를 고려하여 연속적인 대화가 자연스럽게 이어지도록 해주세요.
+
+주의: 반드시 한국어로만 응답하세요.`;
         break;
         
       default:
         return "안녕하세요! 무엇을 도와드릴까요?";
     }
 
-    const api_token = env.GOOGLE_AI_STUDIO_TOKEN;
-    const account_id = "b227edcf71da28cffe319fe486c42e39";
-    const gateway_name = "my-gateway";
-
-    const genAI = new GoogleGenerativeAI(api_token);
-    const model = genAI.getGenerativeModel(
-      { model: "gemini-1.5-flash" },
+    // Cloudflare Workers AI의 Llama 모델 사용
+    const fullPrompt = systemPrompt ? `${systemPrompt}\n\n${responsePrompt}` : responsePrompt;
+    
+    const response = await env.AI.run(
+      "@cf/meta/llama-2-7b-chat-int8",
       {
-        baseUrl: `https://gateway.ai.cloudflare.com/v1/${account_id}/${gateway_name}/google-ai-studio`,
-      },
+        messages: [{
+          role: "user",
+          content: fullPrompt
+        }],
+        max_tokens: 1024,
+      }
     );
 
-    const fullPrompt = systemPrompt ? `${systemPrompt}\n\n${responsePrompt}` : responsePrompt;
-    const result = await model.generateContent(fullPrompt);
-    const response = await result.response;
-    return response.text();
+    return response.response || '';
   } catch (error) {
     console.error("Error generating intent response:", error);
     

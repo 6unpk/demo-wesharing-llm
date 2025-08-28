@@ -8,10 +8,7 @@ export interface Env {
    */
   AI: Ai;
 
-  /**
-   * Google AI Studio Token for Gemini calls
-   */
-  GOOGLE_AI_STUDIO_TOKEN: string;
+
 
 
 
